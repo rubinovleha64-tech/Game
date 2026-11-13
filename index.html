@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Telegram Runner</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a2e;
+            color: #fff;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
+        #ui {
+            position: absolute;
+            top: 15px;
+            display: flex;
+            gap: 20px;
+            font-size: 20px;
+            font-weight: bold;
+            z-index: 10;
+            text-shadow: 1px 1px 3px #000;
+        }
+        canvas {
+            background-color: #2c2c34;
+            border-left: 4px solid #555;
+            border-right: 4px solid #555;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        #game-over {
+            display: none;
+            position: absolute;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            z-index: 20;
+        }
+        button {
+            margin-top: 15px;
+            padding: 12px 25px;
+            font-size: 18px;
+            font-weight: bold;
+            background-color: #ff9f1c;
+            color: #000;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div>Счёт: <span id="score">0</span></div>
+        <div>🪙 <span id="coins">0</span></div>
+    </div>
+    <canvas id="game" width="300" height="500"></canvas>
+    <div id="game-over">
+        <h2>Вы врезались!</h2>
+        <p>Итоговый счёт: <span id="final-score">0</span></p>
+        <button onclick="resetGame()">Играть снова</button>
+    </div>
+
+    <script>
+        if (window.Telegram && window.Telegram.WebApp) {
+            window.Telegram.WebApp.expand();
+        }
+
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+
+        const lanes = [60, 150, 240];
+        let currentLane = 1;
+        let score = 0;
+        let coins = 0;
+        let speed = 5;
+        let isGameOver = false;
+
+        const player = {
+            x: lanes[1],
+            y: 420,
+            radius: 18,
+            state: 'run',
+            stateTimer: 0
+        };
+
+        let obstacles = [];
+        let coinItems = [];
+        let frameCount = 0;
+
+        function moveLeft() {
+            if (currentLane > 0) currentLane--;
+        }
+
+        function moveRight() {
+            if (currentLane < 2) currentLane++;
+        }
+
+        function jump() {
+            if (player.state === 'run') {
+                player.state = 'jump';
+                player.stateTimer = 35;
+            }
+        }
+
+        function slide() {
+            if (player.state === 'run') {
+                player.state = 'slide';
+                player.stateTimer = 35;
+            }
+        }
+
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        document.addEventListener('touchstart', e => {
+            touchStartX = e.changedTouches[0].screenX;
+            touchStartY = e.changedTouches[0].screenY;
+        });
+
+        document.addEventListener('touchend', e => {
+            if (isGameOver) return;
+            const dx = e.changedTouches[0].screenX - touchStartX;
+            const dy = e.changedTouches[0].screenY - touchStartY;
+
+            if (Math.abs(dx) > Math.abs(dy)) {
+                if (dx > 30) moveRight();
+                else if (dx < -30) moveLeft();
+            } else {
+                if (dy < -30) jump();
+                else if (dy > 30) slide();
+            }
+        });
+
+        document.addEventListener('keydown', e => {
+            if (isGameOver) return;
+            if (e.key === 'ArrowLeft') moveLeft();
+            if (e.key === 'ArrowRight') moveRight();
+            if (e.key === 'ArrowUp') jump();
+            if (e.key === 'ArrowDown') slide();
+        });
+
+        function spawnEntities() {
+            const lane = Math.floor(Math.random() * 3);
+            const typeRand = Math.random();
+
+            if (typeRand < 0.5) {
+                obstacles.push({ lane, y: -80, width: 60, height: 80, type: 'train', color: '#e63946' });
+            } else if (typeRand < 0.75) {
+                obstacles.push({ lane, y: -30, width: 60, height: 20, type: 'low', color: '#f4a261' });
+            } else {
+                obstacles.push({ lane, y: -30, width: 60, height: 25, type: 'high', color: '#457b9d' });
+            }
+
+            const coinLane = (lane + 1) % 3;
+            coinItems.push({ lane: coinLane, y: -40, collected: false });
+        }
+
+        function update() {
+            if (isGameOver) return;
+
+            frameCount++;
+            score += 0.1;
+            if (frameCount % 300 === 0) speed += 0.4;
+
+            document.getElementById('score').innerText = Math.floor(score);
+
+            const targetX = lanes[currentLane];
+            player.x += (targetX - player.x) * 0.25;
+
+            if (player.stateTimer > 0) {
+                player.stateTimer--;
+                if (player.stateTimer === 0) player.state = 'run';
+            }
+
+            if (frameCount % Math.max(35, Math.floor(85 - speed * 3)) === 0) {
+                spawnEntities();
+            }
+
+            for (let i = obstacles.length - 1; i >= 0; i--) {
+                let obs = obstacles[i];
+                obs.y += speed;
+
+                const obsX = lanes[obs.lane];
+                const hitX = Math.abs(player.x - obsX) < 35;
+                const hitY = obs.y + obs.height > player.y - 15 && obs.y < player.y + 15;
+
+                if (hitX && hitY) {
+                    let crashed = true;
+                    if (obs.type === 'low' && player.state === 'jump') crashed = false;
+                    if (obs.type === 'high' && player.state === 'slide') crashed = false;
+
+                    if (crashed) {
+                        gameOver();
+                        return;
+                    }
+                }
+
+                if (obs.y > canvas.height) obstacles.splice(i, 1);
+            }
+
+            for (let i = coinItems.length - 1; i >= 0; i--) {
+                let c = coinItems[i];
+                c.y += speed;
+
+                const coinX = lanes[c.lane];
+                if (!c.collected && Math.abs(player.x - coinX) < 30 && Math.abs(player.y - c.y) < 30) {
+                    c.collected = true;
+                    coins++;
+                    score += 10;
+                    document.getElementById('coins').innerText = coins;
+                }
+
+                if (c.y > canvas.height) coinItems.splice(i, 1);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.strokeStyle = '#444';
+            ctx.lineWidth = 2;
+            lanes.forEach(x => {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            });
+
+            coinItems.forEach(c => {
+                if (!c.collected) {
+                    ctx.fillStyle = '#ffd166';
+                    ctx.beginPath();
+                    ctx.arc(lanes[c.lane], c.y, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+
+            obstacles.forEach(obs => {
+                ctx.fillStyle = obs.color;
+                ctx.fillRect(lanes[obs.lane] - obs.width / 2, obs.y, obs.width, obs.height);
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px sans-serif';
+                ctx.textAlign = 'center';
+                if (obs.type === 'low') ctx.fillText('ПРЫЖОК', lanes[obs.lane], obs.y + 14);
+                if (obs.type === 'high') ctx.fillText('ВНИЗ', lanes[obs.lane], obs.y + 16);
+            });
+
+            ctx.save();
+            if (player.state === 'jump') {
+                ctx.fillStyle = '#06d6a0';
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.radius * 1.35, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (player.state === 'slide') {
+                ctx.fillStyle = '#118ab2';
+                ctx.fillRect(player.x - 18, player.y - 8, 36, 16);
+            } else {
+                ctx.fillStyle = '#00f5d4';
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function gameOver() {
+            isGameOver = true;
+            document.getElementById('final-score').innerText = Math.floor(score);
+            document.getElementById('game-over').style.display = 'block';
+        }
+
+        function resetGame() {
+            currentLane = 1;
+            player.x = lanes[1];
+            player.state = 'run';
+            score = 0;
+            coins = 0;
+            speed = 5;
+            obstacles = [];
+            coinItems = [];
+            isGameOver = false;
+            document.getElementById('coins').innerText = '0';
+            document.getElementById('game-over').style.display = 'none';
+        }
+
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        loop();
+    </script>
+</body>
+</html>
